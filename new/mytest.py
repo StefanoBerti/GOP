@@ -8,6 +8,7 @@ import utils
 import hopenet
 import torchvision
 from facenet_pytorch import MTCNN
+import time
 
 # TODO ############################################################################################################
 # UNIRE MYTEST E HEAD POSE ESTIMATION
@@ -42,6 +43,8 @@ if __name__ == "__main__":
 
     # Main loop
     frame_num = 1
+    start_time = time.time()
+
     while True:
 
         # Get frame and convert it
@@ -101,7 +104,7 @@ if __name__ == "__main__":
                     yaw_predicted = torch.sum(yaw_predicted.data[0] * idx_tensor) * 3 - 99
                     pitch_predicted = torch.sum(pitch_predicted.data[0] * idx_tensor) * 3 - 99
                     roll_predicted = torch.sum(roll_predicted.data[0] * idx_tensor) * 3 - 99
-                    print(yaw_predicted.item(), " ", pitch_predicted.item(), " ", roll_predicted.item())
+                    # print(yaw_predicted.item(), " ", pitch_predicted.item(), " ", roll_predicted.item())
 
                     # Print new frame with cube and axis
                     # utils.plot_pose_cube(frame, yaw_predicted, pitch_predicted, roll_predicted,
@@ -111,9 +114,14 @@ if __name__ == "__main__":
                     # Plot expanded bounding box
                     # cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0,255,0), 1)
 
+        # Print fps counter
+        fps = frame_num / (time.time() - start_time)
+        fps = "{:.2f}".format(fps)
+        cv2.putText(frame, "FPS: "+str(fps), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color=3)
+        frame_num += 1
+
         cv2.imshow('faces', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-        frame_num += 1
 
     cap.release()
