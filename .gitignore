@@ -1,3 +1,5 @@
 .idea
 __pycache__
 model_objects
+facenet_pytorch
+new/facenet_pytorch
