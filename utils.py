@@ -1,0 +1,16 @@
+params = {
+    "model": 101,
+    "cam_id": 2,
+    "cam_width": 1280,
+    "cam_height": 720,
+    "scale_factor": 0.7125,
+    "max_pose_detection": 1,
+    "min_pose_score": 0.15,
+    "spt-master-port": 6001,
+    "hpe-master-port": 6002,
+    "hpe-net-port": 6003,
+    "master-net-port": 6004,
+    "net-print-port": 6005,
+    "hidden_size": 100,
+    "num_classes": 5,
+}
