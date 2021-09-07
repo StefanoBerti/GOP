@@ -6,6 +6,24 @@ import cv2
 import math
 from math import cos, sin
 
+params = {
+    "cam_id": 2,
+    "face_min_conf": 0.8,
+    "object_min_conf": 0.5,
+    "OD_prototxt_path": "model_objects/MobileNetSSD_deploy.prototxt.txt",
+    "OD_model_path": "model_objects/MobileNetSSD_deploy.caffemodel",
+}
+
+
+def second_more_distant(x, a, b):
+    """
+    Return True if x is closer to a w.r.t. b
+    """
+    da = math.dist(x, a)
+    db = math.dist(x, b)
+    return da <= db
+
+
 def softmax_temperature(tensor, temperature):
     result = torch.exp(tensor / temperature)
     result = torch.div(result, torch.sum(result, 1).unsqueeze(1).expand_as(result))
@@ -82,7 +100,7 @@ def plot_pose_cube(img, yaw, pitch, roll, tdx=None, tdy=None, size=150.):
 
     return img
 
-def draw_axis(img, yaw, pitch, roll, tdx=None, tdy=None, size = 100):
+def draw_axis(img, yaw, pitch, roll, tdx=None, tdy=None, size = 1000):
 
     pitch = pitch * np.pi / 180
     yaw = -(yaw * np.pi / 180)
@@ -109,8 +127,14 @@ def draw_axis(img, yaw, pitch, roll, tdx=None, tdy=None, size = 100):
     x3 = size * (sin(yaw)) + tdx
     y3 = size * (-cos(yaw) * sin(pitch)) + tdy
 
-    cv2.line(img, (int(tdx), int(tdy)), (int(x1),int(y1)),(0,0,255),3)
-    cv2.line(img, (int(tdx), int(tdy)), (int(x2),int(y2)),(0,255,0),3)
+    # Longer z-axis to estimate line of sight
+    # delta = (tdy - y3)/(tdx - x3)
+    # q = tdy
+    # y = delta * tdx + q
+    # cv2.line(img, (int(tdx), int(tdy)), (640, int(y)), (255, 255, 255), 3)
+    #
+    # cv2.line(img, (int(tdx), int(tdy)), (int(x1),int(y1)),(0,0,255),3)
+    # cv2.line(img, (int(tdx), int(tdy)), (int(x2),int(y2)),(0,255,0),3)
     cv2.line(img, (int(tdx), int(tdy)), (int(x3),int(y3)),(255,0,0),2)
 
-    return img
+    return img, tdx, tdy, x3, y3
