@@ -1,58 +1,101 @@
 import open3d as o3d
-import torch
 from open3d.cpu.pybind.geometry import PointCloud
 from open3d.visualization import Visualizer
-from torchvision import models
 import cv2
 import numpy as np
-
-from model.segmentation1 import Segmentation
-from lib.cad import Model, ICP
-from lib.input import RealSense, YCBVideo
-from model.segmentation2 import SegNet
-from sklearn.neighbors import NearestNeighbors
+import pyrealsense2 as rs
+from PIL import Image
+from facenet_pytorch import MTCNN
 
 
-def loss(prediction, target):
-    nbrs = NearestNeighbors(n_neighbors=1).fit(target)
-    distances, indices = nbrs.kneighbors(prediction, n_neighbors=1)
-    return np.mean(distances)
+class RealSense:
+    def __init__(self):
+        self.pipeline = rs.pipeline()
+
+        config = rs.config()
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        self.profile = self.pipeline.start(config)
+
+        self.align = rs.align(rs.stream.color)
+
+    def intrinsics(self):
+        return self.profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+
+    def read(self):
+        frames = self.pipeline.wait_for_frames()
+        aligned_frames = self.align.process(frames)
+
+        depth_frame = aligned_frames.get_depth_frame()  # aligned_depth_frame is a 640x480 depth image
+        color_frame = aligned_frames.get_color_frame()
+
+        depth_image = np.asanyarray(depth_frame.get_data())
+        color_image = np.asanyarray(color_frame.get_data())
+
+        return color_image, depth_image
+
+    def pointcloud(self, rgb_image, depth_image):
+        depth_image = o3d.geometry.Image(depth_image)
+        rgb_image = o3d.geometry.Image(rgb_image)
+        rgbd = o3d.geometry.RGBDImage().create_from_color_and_depth(rgb_image, depth_image,
+                                                                    convert_rgb_to_intensity=False,
+                                                                    depth_scale=1500)
+
+        intrinsics = self.intrinsics()
+        m = np.array(rgb_image)
+        width = m.shape[1]
+        height = m.shape[0]
+        camera = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsics.fx,
+                                                   intrinsics.fy, intrinsics.ppx, intrinsics.ppy)
+
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, camera)
+        pcd.transform([[1, 0, 0, 0],
+                       [0, -1, 0, 0],
+                       [0, 0, -1, 0],
+                       [0, 0, 0, 1]])
+
+        return pcd
+
+    def stop(self):
+        self.pipeline.stop()
 
 
 class Loop:
-    def __init__(self, input, segmentation, icps):
+    def __init__(self, input):
         self.input = input
-        self.segmentation = segmentation
-        self.icps = icps
 
         self.vis = Visualizer()
         self.vis.create_window('Pose Estimation')
 
         self.full_pcd = PointCloud()
         self.render_setup = False
+        self.face_detector = MTCNN(keep_all=True, device="cuda:0")
 
     def run(self):
         color_image, depth_image = self.input.read()
-        segmented, categories = segmentation(color_image)
 
-        for i, icp in enumerate(icps):
-            model = icp.model
+        # Look for faces inside it
+        boxes, confidences = self.face_detector.detect(Image.fromarray(color_image))
+        # # If at least one face is recognized
+        if boxes is not None:
+            for i, elem in enumerate(boxes):
+                # Get x_min, y_min, x_max, y_max, conf
+                x_min = elem[0]
+                y_min = elem[1]
+                x_max = elem[2]
+                y_max = elem[3]
+                import copy
+                face_img = copy.deepcopy(color_image[int(y_min):int(y_max), int(x_min):int(x_max)])
+                face_depth = copy.deepcopy(depth_image[int(y_min):int(y_max), int(x_min):int(x_max)])
 
-            segmented_depth = segmentation.segment_depth(categories, depth_image, model.id)
+                color_image.fill(0)
+                depth_image.fill(0)
 
-            cv2.imshow('Segmented', segmented)
-            cv2.imshow('Color', color_image)
+                color_image[int(y_min):int(y_max), int(x_min):int(x_max)] = face_img
+                depth_image[int(y_min):int(y_max), int(x_min):int(x_max)] = face_depth
 
-            object_pcd = input.pointcloud(color_image, segmented_depth)
-
-            object_pcd = object_pcd.voxel_down_sample(voxel_size=0.001)
-            object_pcd, ind = object_pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-
-            # object_pcd.estimate_normals( # Used for point to plane icp
-            #     search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30))
-            icp(object_pcd)
-
-            icp.model.pc.get_max_bound()
+        cv2.imshow('Segmented', depth_image)
+        cv2.imshow('Color', color_image)
 
         self.full_pcd.clear()
 
@@ -61,9 +104,23 @@ class Loop:
         # model_pcd = icp.model.pc
 
         # input.project(color_image, [icp.model for icp in icps])
-        self.render([self.full_pcd] + [icp.model.pc for icp in icps]) #, model_pcd])
+        self.render([self.full_pcd])  #  + [icp.model.pc for icp in icps]) #, model_pcd])
 
     def render(self, pcds):
+
+        points = np.array(pcds[0].points)
+        mean_x = sum(points[:, 0]) / len(points)
+        mean_y = sum(points[:, 1]) / len(points)
+        mean_z = sum(points[:, 2]) / len(points)
+
+        mesh_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+        mesh_sphere.compute_vertex_normals()
+        mesh_sphere.paint_uniform_color([0.1, 0.1, 0.7])
+
+        pcds[0].points = o3d.utility.Vector3dVector(np.append(np.array(pcds[0].points), np.array([mean_x, mean_y, mean_z])[None, ...], axis=0))
+
+        print("x: ", mean_x, ", y: ", mean_y, ", z:", mean_z)
+
         if not self.render_setup:
             for pc in pcds:
                 self.vis.add_geometry(pc)
@@ -89,20 +146,8 @@ class Loop:
 
 
 if __name__ == '__main__':
-    icps = []
-    objects = [('021_bleach_cleanser', 5, [1, 0, 0])]
-
-    for obj in objects:
-        model_path = f"C:/Users/arosasco/Desktop/ycb/YCB_Video_Dataset/models/{obj[0]}/points.xyz"
-        with open(model_path) as file:
-            model = \
-                Model(pointcloud=np.array([line.rstrip().split() for line in file.readlines()], dtype=float),
-                      name=obj[0], id=obj[1], color=obj[2])
-        # model.transform(np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, -1, 0, 0], [0, 0, 0, 1]]))
-        icps.append(ICP(model, 10))
-
     input = RealSense()
-    segmentation = Segmentation(models.segmentation.fcn_resnet101(pretrained=True).eval(), device='cuda')
 
-    Loop(input, segmentation, icps).start()
+    Loop(input).start()
+
 
