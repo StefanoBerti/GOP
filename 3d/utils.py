@@ -14,7 +14,7 @@ params = {
     "object_min_conf": 0.5,
     "OD_prototxt_path": "model_objects/MobileNetSSD_deploy.prototxt.txt",
     "OD_model_path": "model_objects/MobileNetSSD_deploy.caffemodel",
-    "cone_height": 5,
+    "cone_height": 2,
     "PE_model_path": "../hopenet_robust_alpha1.pkl"
 }
 
